@@ -100,15 +100,17 @@ namespace PID
 		PIDParameters<T> FarParameter;
 		T FarDistance;
 
-		PIDParameters<T> Get(T distance)
+		PIDParameters<T> GetAt(T distance)
 		{
+			distance = distance >= 0 ? distance : -distance;
 			if (distance < NearDistance) return NearParameter;
-			if (distance < FarDistance) return FarParameter;
+			if (distance > FarDistance) return FarParameter;
 
-			auto relative_distance = (distance - NearDistance) / (distance - FarDistance);
+			auto relative_distance = (distance - NearDistance) / (FarDistance - NearDistance);
 			return PIDParameters<T>::Linear(NearParameter, FarParameter, relative_distance);
 		}
 	};
+
 
 	template <typename T>
 	class PIDController
@@ -126,6 +128,7 @@ namespace PID
 		T Output;
 		T Setpoint;
 
+
 		// **********************************************************************************
 		// * Allows the controller Mode to be set to manual (0) or Automatic (non-zero)
 		// * when the transition from manual to auto occurs, the controller is
@@ -136,52 +139,13 @@ namespace PID
 			if (Mode == mode) return;
 			Mode = mode;
 
-			if (mode == MODE::MANUAL)
+			if (mode == MODE::AUTOMATIC)
 				Initialize();
 		}
 
 		void SetProportionalOn(const PROPORTIONAL_ON proportional_on)
 		{
 			Proportional_On = proportional_on;
-		}
-
-		// **********************************************************************************
-		// *   This, as they say, is where the magic happens.  this function should be called
-		// *   every time "void loop()" executes.  the function will decide for itself whether a new
-		// *   pid Output needs to be computed.  returns true when the output is computed,
-		// *   false when nothing has been done.
-		// **********************************************************************************
-		bool Update()
-		{
-			if (Mode != MODE::AUTOMATIC) return false;
-
-			const unsigned long now = GetTime();
-			const unsigned long time_change = (now - last_time);
-			if (time_change >= SampleTime)
-			{
-				UpdatePID();
-
-				last_input = Input;
-				last_time = now;
-				return true;
-			}
-			else return false;
-		}
-
-		bool Update(T input)
-		{
-			Input = input;
-			return Update();
-		}
-
-		void ForceUpdate()
-		{
-			if (Mode != MODE::AUTOMATIC) return;
-
-			UpdatePID();
-
-			last_input = Input;
-			last_time = GetTime();
 		}
 
 		// **********************************************************************************
@@ -201,8 +165,8 @@ namespace PID
 
 			if (Mode == MODE::AUTOMATIC)
 			{
-				Clamp(Output, output_min, output_max);
-				Clamp(output_sum, output_min, output_max);
+				Output = Clamp(Output, output_min, output_max);
+				output_sum = Clamp(output_sum, output_min, output_max);
 			}
 		}
 
@@ -220,7 +184,7 @@ namespace PID
 
 			parameters_original.Set(pid_parameters);
 
-			T sample_time_in_sec = static_cast<T>(SampleTime) / 1000;
+			T sample_time_in_sec = static_cast<T>(SampleTime) / (Resolution == RESOLUTION::MILLIS ? 1000 : 1000000);
 			pid_parameters.Ki *= sample_time_in_sec;
 			pid_parameters.Kd /= sample_time_in_sec;
 			parameters_computed.Set(pid_parameters);
@@ -259,6 +223,16 @@ namespace PID
 			}
 		}
 
+		void TurnOn() { SetMode(MODE::AUTOMATIC); }
+
+		void TurnOff() { SetMode(MODE::MANUAL); }
+
+		void Toggle()
+		{
+			if (Mode == MODE::AUTOMATIC) TurnOff();
+			else TurnOn();
+		}
+
 
 		// **********************************************************************************
 		// * Just because you set the parameters.Kp=-1 doesn't mean it actually happened.  these
@@ -273,21 +247,62 @@ namespace PID
 
 		T GetKd() { return parameters_original.Kd; }
 
+		T GetCorrectedKp() { return parameters_computed.Kp; }
+
+		T GetCorrectedKi() { return parameters_computed.Ki; }
+
+		T GetCorrectedKd() { return parameters_computed.Kd; }
+
 		MODE GetMode() const { return  Mode == MODE::AUTOMATIC ? AUTOMATIC : MANUAL; }
 
 		DIRECTION GetDirection() const { return Direction; }
 
 		PROPORTIONAL_ON GetProportionalOn() const { return Proportional_On; }
 
-		void TurnOn() { SetMode(MODE::AUTOMATIC); }
 
-		void TurnOff() { SetMode(MODE::MANUAL); }
-
-		void Toggle()
+		// **********************************************************************************
+		// *   This, as they say, is where the magic happens.  this function should be called
+		// *   every time "void loop()" executes.  the function will decide for itself whether a new
+		// *   pid Output needs to be computed.  returns true when the output is computed,
+		// *   false when nothing has been done.
+		// **********************************************************************************
+		bool Update()
 		{
-			if (Mode == MODE::AUTOMATIC) TurnOff();
-			else TurnOn();
+			if (Mode != MODE::AUTOMATIC) return false;
+
+			const unsigned long now = GetTime();
+			const unsigned long time_change = (now - last_time);
+			if (time_change >= SampleTime)
+			{
+				UpdatePID();
+
+				last_time = now;
+				return true;
+			}
+			else return false;
 		}
+
+		bool Update(T input)
+		{
+			Input = input;
+			return Update();
+		}
+
+		void ForceUpdate()
+		{
+			if (Mode != MODE::AUTOMATIC) return;
+
+			UpdatePID();
+
+			last_time = GetTime();
+		}
+
+		void ForceUpdate(T input)
+		{
+			Input = input;
+			return ForceUpdate();
+		}
+
 
 	private:
 		// **********************************************************************************
@@ -299,7 +314,7 @@ namespace PID
 			last_input = Input;
 			output_sum = Output;
 
-			Clamp(output_sum, output_min, output_max);
+			output_sum = Clamp(output_sum, output_min, output_max);
 		}
 
 		void UpdatePID()
@@ -310,8 +325,7 @@ namespace PID
 
 			/*Add Proportional on Measurement, if P_ON_M is specified*/
 			if (Proportional_On == PROPORTIONAL_ON::MEASURE) output_sum -= parameters_computed.Kp * diff_input;
-
-			Clamp(output_sum, output_min, output_max);
+			output_sum = Clamp(output_sum, output_min, output_max);
 
 			/*Add Proportional on Error, if P_ON_E is specified*/
 			if (Proportional_On == PROPORTIONAL_ON::ERROR) Output = parameters_computed.Kp * error;
@@ -319,7 +333,9 @@ namespace PID
 
 			/*Compute Rest of PIDController Output*/
 			Output += output_sum - parameters_computed.Kd * diff_input;
-			Clamp(Output, output_min, output_max);
+			Output = Clamp(Output, output_min, output_max);
+
+			last_input = Input;
 		}
 
 		unsigned long GetTime() const
