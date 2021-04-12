@@ -21,7 +21,7 @@ You should have received a copy of the GNU General Public License along with thi
 #ifndef __PID_LIBRARY_h__
 #define __PID_LIBRARY_h__
 
-#define __PID_LIBRARY_VERSION__	2.0.0
+#define __PID_LIBRARY_VERSION__	2.1.0
 
 #include "Arduino.h"
 
@@ -115,13 +115,16 @@ namespace PID
 	template <typename T>
 	class PIDController
 	{
+		typedef void(*OnUpdateHandler)(T output);
+		typedef T(*OnInputRequiredHandler)(void);
+
 	public:
 		PIDController(PIDParameters<T> pid_parameters, DIRECTION direction = DIRECTION::DIRECT)
 		{
 			SetDirection(direction);
 			SetTunings(pid_parameters);
 
-			last_time = GetTime() - SampleTime;
+			Last_time = GetTime() - Sample_time;
 		}
 
 		T Input;
@@ -160,13 +163,13 @@ namespace PID
 		void SetOutputLimits(const T min_limit, const T max_limit)
 		{
 			if (min_limit >= max_limit) return;
-			output_min = min_limit;
-			output_max = max_limit;
+			Output_min = min_limit;
+			Output_max = max_limit;
 
 			if (Mode == MODE::AUTOMATIC)
 			{
-				Output = Clamp(Output, output_min, output_max);
-				output_sum = Clamp(output_sum, output_min, output_max);
+				Output = Clamp(Output, Output_min, Output_max);
+				Output_sum = Clamp(Output_sum, Output_min, Output_max);
 			}
 		}
 
@@ -182,15 +185,15 @@ namespace PID
 
 			Proportional_On = proportional_on;
 
-			parameters_original.Set(pid_parameters);
+			Parameters_original.Set(pid_parameters);
 
-			T sample_time_in_sec = static_cast<T>(SampleTime) / (Resolution == RESOLUTION::MILLIS ? 1000 : 1000000);
+			T sample_time_in_sec = static_cast<T>(Sample_time) / (Resolution == RESOLUTION::MILLIS ? 1000 : 1000000);
 			pid_parameters.Ki *= sample_time_in_sec;
 			pid_parameters.Kd /= sample_time_in_sec;
-			parameters_computed.Set(pid_parameters);
+			Parameters_computed.Set(pid_parameters);
 
 			if (Direction == REVERSE)
-				parameters_computed.Invert();
+				Parameters_computed.Invert();
 		}
 
 
@@ -203,7 +206,7 @@ namespace PID
 		void SetDirection(const DIRECTION direction)
 		{
 			if (Mode == MODE::AUTOMATIC && Direction != direction)
-				parameters_computed.Invert();
+				Parameters_computed.Invert();
 
 			Direction = direction;
 		}
@@ -216,10 +219,10 @@ namespace PID
 		{
 			if (sample_time > 0)
 			{
-				T ratio = static_cast<T>(sample_time) / static_cast<T>(SampleTime);
-				parameters_computed.Ki *= ratio;
-				parameters_computed.Kd /= ratio;
-				SampleTime = sample_time;
+				T ratio = static_cast<T>(sample_time) / static_cast<T>(sample_time);
+				Parameters_computed.Ki *= ratio;
+				Parameters_computed.Kd /= ratio;
+				sample_time = sample_time;
 			}
 		}
 
@@ -241,17 +244,17 @@ namespace PID
 		// **********************************************************************************
 		T GetError() { return Setpoint - Input; }
 
-		T GetKp() { return parameters_original.Kp; }
+		T GetKp() { return Parameters_original.Kp; }
 
-		T GetKi() { return parameters_original.Ki; }
+		T GetKi() { return Parameters_original.Ki; }
 
-		T GetKd() { return parameters_original.Kd; }
+		T GetKd() { return Parameters_original.Kd; }
 
-		T GetCorrectedKp() { return parameters_computed.Kp; }
+		T GetCorrectedKp() { return Parameters_computed.Kp; }
 
-		T GetCorrectedKi() { return parameters_computed.Ki; }
+		T GetCorrectedKi() { return Parameters_computed.Ki; }
 
-		T GetCorrectedKd() { return parameters_computed.Kd; }
+		T GetCorrectedKd() { return Parameters_computed.Kd; }
 
 		MODE GetMode() const { return  Mode == MODE::AUTOMATIC ? AUTOMATIC : MANUAL; }
 
@@ -271,12 +274,12 @@ namespace PID
 			if (Mode != MODE::AUTOMATIC) return false;
 
 			const unsigned long now = GetTime();
-			const unsigned long time_change = (now - last_time);
-			if (time_change >= SampleTime)
+			const unsigned long time_change = (now - Last_time);
+			if (time_change >= Sample_time)
 			{
 				UpdatePID();
 
-				last_time = now;
+				Last_time = now;
 				return true;
 			}
 			else return false;
@@ -294,7 +297,7 @@ namespace PID
 
 			UpdatePID();
 
-			last_time = GetTime();
+			Last_time = GetTime();
 		}
 
 		void ForceUpdate(T input)
@@ -311,31 +314,31 @@ namespace PID
 		// **********************************************************************************
 		void Initialize()
 		{
-			last_input = Input;
-			output_sum = Output;
+			Last_input = Input;
+			Output_sum = Output;
 
-			output_sum = Clamp(output_sum, output_min, output_max);
+			Output_sum = Clamp(Output_sum, Output_min, Output_max);
 		}
 
 		void UpdatePID()
 		{
 			T error = GetError();
-			T diff_input = (Input - last_input);
-			output_sum += (parameters_computed.Ki * error);
+			T diff_input = (Input - Last_input);
+			Output_sum += (Parameters_computed.Ki * error);
 
 			/*Add Proportional on Measurement, if P_ON_M is specified*/
-			if (Proportional_On == PROPORTIONAL_ON::MEASURE) output_sum -= parameters_computed.Kp * diff_input;
-			output_sum = Clamp(output_sum, output_min, output_max);
+			if (Proportional_On == PROPORTIONAL_ON::MEASURE) Output_sum -= Parameters_computed.Kp * diff_input;
+			Output_sum = Clamp(Output_sum, Output_min, Output_max);
 
 			/*Add Proportional on Error, if P_ON_E is specified*/
-			if (Proportional_On == PROPORTIONAL_ON::ERROR) Output = parameters_computed.Kp * error;
+			if (Proportional_On == PROPORTIONAL_ON::ERROR) Output = Parameters_computed.Kp * error;
 			else Output = 0;
 
 			/*Compute Rest of PIDController Output*/
-			Output += output_sum - parameters_computed.Kd * diff_input;
-			Output = Clamp(Output, output_min, output_max);
+			Output += Output_sum - Parameters_computed.Kd * diff_input;
+			Output = Clamp(Output, Output_min, Output_max);
 
-			last_input = Input;
+			Last_input = Input;
 		}
 
 		unsigned long GetTime() const
@@ -348,16 +351,16 @@ namespace PID
 			return (x < min) ? min : ((x > max) ? max : x);
 		}
 
-		PIDParameters<T> parameters_original;
-		PIDParameters<T> parameters_computed;
+		PIDParameters<T> Parameters_original;
+		PIDParameters<T> Parameters_computed;
 
-		T output_min = 0;
-		T output_max = 255.0;
-		T output_sum;
+		T Output_min = 0;
+		T Output_max = 255.0;
+		T Output_sum;
 
-		T last_input;
-		unsigned long last_time;
-		unsigned long SampleTime = 100;
+		T Last_input;
+		unsigned long Last_time;
+		unsigned long Sample_time = 100;
 
 		MODE Mode = MODE::MANUAL;
 		DIRECTION Direction = DIRECTION::DIRECT;
