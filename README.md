@@ -31,14 +31,14 @@ void loop()
 ```
 
 ## Changes from Arduino-PID-Library
-- PID class it's now call PIDController class
+- PID class it's now named PIDController class
 - Added PID namespace to avoid name collisions
-- PIDController use templating, so both PIDController<float> or PIDController<double> are now posible
+- PIDController uses templating, so both `PIDController<float>` or `PIDController<double>` are now posible
 - Input, Output and SetPoint are not longer pointers, but internal PIDControllers variables
 - `Calculate()` funtion is now name `Update()`
 - Added `Update(T input)` that simultaneous set Input and run `Update()` method
 - Added `ForzeUpdate()` to update even when Interval have not been complete (not recommended, but required for some users)
-- Kp, Ki and Kd factors are now wrapped into PIDParameters object
+- Kp, Ki and Kd factors are now wrapped into `PIDParameters` class
 - #defines for PID options are now enums
 - "Resolution" option added for working with `millis()` or `micros()`
 - Major refactoring and code cleaning
@@ -46,7 +46,7 @@ void loop()
 ### Change Log
 #### Version 2.0.0
 
-- Initial Version with modifications as listed in [Changes from Arduino-PID-Library.]
+- Initial Version with modifications as listed in [Changes from Arduino-PID-Library]
 
 ------
 
