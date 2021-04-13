@@ -1,5 +1,5 @@
 /***************************************************
-PIDController - Version 2.0.0
+PIDController - Version 2.2.0
 Copyright (c) 2021 Luis Llamas (www.luisllamas.es)
 
 This library is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
@@ -21,7 +21,7 @@ You should have received a copy of the GNU General Public License along with thi
 #ifndef __PID_LIBRARY_h__
 #define __PID_LIBRARY_h__
 
-#define __PID_LIBRARY_VERSION__	2.1.0
+#define __PID_LIBRARY_VERSION__	2.2.0
 
 #include "Arduino.h"
 
@@ -232,7 +232,7 @@ namespace PID
 
 		void Toggle()
 		{
-			if (Mode == MODE::AUTOMATIC) TurnOff();
+			if (IsTurnedOn()) TurnOff();
 			else TurnOn();
 		}
 
@@ -256,11 +256,13 @@ namespace PID
 
 		T GetCorrectedKd() { return Parameters_computed.Kd; }
 
-		MODE GetMode() const { return  Mode == MODE::AUTOMATIC ? AUTOMATIC : MANUAL; }
+		MODE GetMode() const { return  Mode; }
 
 		DIRECTION GetDirection() const { return Direction; }
 
 		PROPORTIONAL_ON GetProportionalOn() const { return Proportional_On; }
+
+		bool IsTurnedOn() const { return Mode == MODE::AUTOMATIC; }
 
 
 		// **********************************************************************************
@@ -271,7 +273,7 @@ namespace PID
 		// **********************************************************************************
 		bool Update()
 		{
-			if (Mode != MODE::AUTOMATIC) return false;
+			if (IsTurnedOn() == false) return false;
 
 			const unsigned long now = GetTime();
 			const unsigned long time_change = (now - Last_time);
@@ -293,7 +295,7 @@ namespace PID
 
 		void ForceUpdate()
 		{
-			if (Mode != MODE::AUTOMATIC) return;
+			if (IsTurnedOn() == false) return;
 
 			UpdatePID();
 
