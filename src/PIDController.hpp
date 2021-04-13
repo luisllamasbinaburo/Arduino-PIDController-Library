@@ -115,9 +115,6 @@ namespace PID
 	template <typename T>
 	class PIDController
 	{
-		typedef void(*OnUpdateHandler)(T output);
-		typedef T(*OnInputRequiredHandler)(void);
-
 	public:
 		PIDController(PIDParameters<T> pid_parameters, DIRECTION direction = DIRECTION::DIRECT)
 		{
