@@ -139,7 +139,8 @@ namespace PID
 			if (Mode == mode) return;
 			Mode = mode;
 
-			if (IsTurnedOn()) Initialize();
+			if (IsTurnedOn())
+				Initialize();
 		}
 
 		void SetProportionalOn(const PROPORTIONAL_ON proportional_on)
