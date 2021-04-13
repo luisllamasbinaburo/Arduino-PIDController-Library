@@ -139,8 +139,7 @@ namespace PID
 			if (Mode == mode) return;
 			Mode = mode;
 
-			if (mode == MODE::AUTOMATIC)
-				Initialize();
+			if (IsTurnedOn()) Initialize();
 		}
 
 		void SetProportionalOn(const PROPORTIONAL_ON proportional_on)
@@ -156,14 +155,13 @@ namespace PID
 		// *  want to clamp it from 0-125.  who knows.  at any rate, that can all be done
 		// *  here.
 		// **********************************************************************************
-
 		void SetOutputLimits(const T min_limit, const T max_limit)
 		{
 			if (min_limit >= max_limit) return;
 			Output_min = min_limit;
 			Output_max = max_limit;
 
-			if (Mode == MODE::AUTOMATIC)
+			if (IsTurnedOn())
 			{
 				Output = Clamp(Output, Output_min, Output_max);
 				Output_sum = Clamp(Output_sum, Output_min, Output_max);
@@ -202,7 +200,7 @@ namespace PID
 		// **********************************************************************************
 		void SetDirection(const DIRECTION direction)
 		{
-			if (Mode == MODE::AUTOMATIC && Direction != direction)
+			if (IsTurnedOn() && Direction != direction)
 				Parameters_computed.Invert();
 
 			Direction = direction;
