@@ -21,7 +21,7 @@ You should have received a copy of the GNU General Public License along with thi
 #ifndef __PID_LIBRARY_h__
 #define __PID_LIBRARY_h__
 
-#define __PID_LIBRARY_VERSION__	2.2.0
+#define __PID_LIBRARY_VERSION__	2.3.0
 
 #include "Arduino.h"
 
@@ -118,8 +118,9 @@ namespace PID
 	public:
 		PIDController(PIDParameters<T> pid_parameters, DIRECTION direction = DIRECTION::DIRECT)
 		{
-			SetDirection(direction);
-			SetTunings(pid_parameters);
+			Parameters_original.Set(pid_parameters);
+			Direction = direction;
+			ComputeParameters();
 
 			Last_time = GetTime() - Sample_time;
 		}
@@ -128,34 +129,11 @@ namespace PID
 		T Output;
 		T Setpoint;
 
-
-		// **********************************************************************************
-		// * Allows the controller Mode to be set to manual (0) or Automatic (non-zero)
-		// * when the transition from manual to auto occurs, the controller is
-		// * automatically initialized
-		// **********************************************************************************
-		void SetMode(const MODE mode)
-		{
-			if (Mode == mode) return;
-			Mode = mode;
-
-			if (IsTurnedOn())
-				Initialize();
-		}
-
 		void SetProportionalOn(const PROPORTIONAL_ON proportional_on)
 		{
 			Proportional_On = proportional_on;
 		}
 
-		// **********************************************************************************
-		// *  This function will be used far more often than SetInputLimits.  while
-		// *  the input to the controller will generally be in the 0-1023 range (which is
-		// *  the default already,)  the output will be a little different.  maybe they'll
-		// *  be doing a time window and will need 0-8000 or something.  or maybe they'll
-		// *  want to clamp it from 0-125.  who knows.  at any rate, that can all be done
-		// *  here.
-		// **********************************************************************************
 		void SetOutputLimits(const T min_limit, const T max_limit)
 		{
 			if (min_limit >= max_limit) return;
@@ -169,57 +147,29 @@ namespace PID
 			}
 		}
 
-
-		// **********************************************************************************
-		// * This function allows the controller's dynamic performance to be adjusted.
-		// * it's called automatically from the constructor, but tunings can also
-		// * be adjusted on the fly during normal operation
-		// **********************************************************************************
-		void SetTunings(PIDParameters<T> pid_parameters, const PROPORTIONAL_ON proportional_on = PROPORTIONAL_ON::MEASURE)
+		void SetTunings(PIDParameters<T> pid_parameters)
 		{
 			if (pid_parameters.HasNegatives()) return;
 
-			Proportional_On = proportional_on;
-
 			Parameters_original.Set(pid_parameters);
-
-			T sample_time_in_sec = static_cast<T>(Sample_time) / (Resolution == RESOLUTION::MILLIS ? 1000 : 1000000);
-			pid_parameters.Ki *= sample_time_in_sec;
-			pid_parameters.Kd /= sample_time_in_sec;
-			Parameters_computed.Set(pid_parameters);
-
-			if (Direction == REVERSE)
-				Parameters_computed.Invert();
+			ComputeParameters();
 		}
 
-
-		// **********************************************************************************
-		// * The PIDController will either be connected to a DIRECT acting process (+Output leads
-		// * to +Input) or a REVERSE acting process(+Output leads to -Input.)  we need to
-		// * know which one, because otherwise we may increase the output when we should
-		// * be decreasing.  This is called from the constructor.
-		// **********************************************************************************
 		void SetDirection(const DIRECTION direction)
 		{
-			if (IsTurnedOn() && Direction != direction)
-				Parameters_computed.Invert();
-
+			if (Direction == direction) return;
+			
 			Direction = direction;
+			ComputeParameters();
 		}
 
 
-		// **********************************************************************************	
-		// * sets the period, in Milliseconds, at which the calculation is performed
-		// **********************************************************************************
 		void SetSampleTime(unsigned long sample_time)
 		{
-			if (sample_time > 0)
-			{
-				T ratio = static_cast<T>(sample_time) / static_cast<T>(sample_time);
-				Parameters_computed.Ki *= ratio;
-				Parameters_computed.Kd /= ratio;
-				sample_time = sample_time;
-			}
+			if (sample_time <= 0) return;
+
+			Sample_time = sample_time;
+			ComputeParameters();
 		}
 
 		void TurnOn() { SetMode(MODE::AUTOMATIC); }
@@ -233,11 +183,6 @@ namespace PID
 		}
 
 
-		// **********************************************************************************
-		// * Just because you set the parameters.Kp=-1 doesn't mean it actually happened.  these
-		// * functions query the internal state of the PIDController.  they're here for parameters_user.lay
-		// * purposes.  this are the functions the PIDController Front-end uses for example
-		// **********************************************************************************
 		T GetError() { return Setpoint - Input; }
 
 		T GetKp() { return Parameters_original.Kp; }
@@ -246,13 +191,11 @@ namespace PID
 
 		T GetKd() { return Parameters_original.Kd; }
 
-		T GetCorrectedKp() { return Parameters_computed.Kp; }
+		T GetCorrectedKp() { return Parameters_corrected.Kp; }
 
-		T GetCorrectedKi() { return Parameters_computed.Ki; }
+		T GetCorrectedKi() { return Parameters_corrected.Ki; }
 
-		T GetCorrectedKd() { return Parameters_computed.Kd; }
-
-		MODE GetMode() const { return  Mode; }
+		T GetCorrectedKd() { return Parameters_corrected.Kd; }
 
 		DIRECTION GetDirection() const { return Direction; }
 
@@ -260,13 +203,6 @@ namespace PID
 
 		bool IsTurnedOn() const { return Mode == MODE::AUTOMATIC; }
 
-
-		// **********************************************************************************
-		// *   This, as they say, is where the magic happens.  this function should be called
-		// *   every time "void loop()" executes.  the function will decide for itself whether a new
-		// *   pid Output needs to be computed.  returns true when the output is computed,
-		// *   false when nothing has been done.
-		// **********************************************************************************
 		bool Update()
 		{
 			if (IsTurnedOn() == false) return false;
@@ -306,10 +242,28 @@ namespace PID
 
 
 	private:
-		// **********************************************************************************
-		// *  does all the things that need to happen to ensure a bumpless transfer
-		// *  from manual to automatic mode.
-		// **********************************************************************************
+		void ComputeParameters()
+		{
+			Parameters_corrected.Set(Parameters_original);
+
+			T sample_time_in_sec = static_cast<T>(Sample_time) / (Resolution == RESOLUTION::MILLIS ? 1000 : 1000000);
+
+			Parameters_corrected.Ki *= sample_time_in_sec;
+			Parameters_corrected.Kd /= sample_time_in_sec;
+
+			if (Direction == REVERSE)
+				Parameters_corrected.Invert();
+		}
+
+		void SetMode(const MODE mode)
+		{
+			if (Mode == mode) return;
+			Mode = mode;
+
+			if (IsTurnedOn())
+				Initialize();
+		}
+
 		void Initialize()
 		{
 			Last_input = Input;
@@ -322,18 +276,22 @@ namespace PID
 		{
 			T error = GetError();
 			T diff_input = (Input - Last_input);
-			Output_sum += (Parameters_computed.Ki * error);
 
-			/*Add Proportional on Measurement, if P_ON_M is specified*/
-			if (Proportional_On == PROPORTIONAL_ON::MEASURE) Output_sum -= Parameters_computed.Kp * diff_input;
+			Output_sum += (Parameters_corrected.Ki * error);
+
+			if (Proportional_On == PROPORTIONAL_ON::ERROR)
+			{
+				 Output = Parameters_corrected.Kp * error;
+			}
+			else
+			{
+				Output_sum -= Parameters_corrected.Kp * diff_input;
+				Output = 0;
+			}
+
 			Output_sum = Clamp(Output_sum, Output_min, Output_max);
 
-			/*Add Proportional on Error, if P_ON_E is specified*/
-			if (Proportional_On == PROPORTIONAL_ON::ERROR) Output = Parameters_computed.Kp * error;
-			else Output = 0;
-
-			/*Compute Rest of PIDController Output*/
-			Output += Output_sum - Parameters_computed.Kd * diff_input;
+			Output += Output_sum - Parameters_corrected.Kd * diff_input;
 			Output = Clamp(Output, Output_min, Output_max);
 
 			Last_input = Input;
@@ -350,7 +308,7 @@ namespace PID
 		}
 
 		PIDParameters<T> Parameters_original;
-		PIDParameters<T> Parameters_computed;
+		PIDParameters<T> Parameters_corrected;
 
 		T Output_min = 0;
 		T Output_max = 255.0;
