@@ -43,10 +43,6 @@ void loop()
 - "Resolution" option added for working with `millis()` or `micros()`
 - Major refactoring and code cleaning
 
-### Change Log
-#### Version 2.0.0
-
-- Initial Version with modifications as listed in [Changes from Arduino-PID-Library]
 
 ------
 
