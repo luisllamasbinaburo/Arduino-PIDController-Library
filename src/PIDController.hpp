@@ -1,5 +1,5 @@
 /***************************************************
-PIDController - Version 2.2.0
+PIDController - Version 2.4.0
 Copyright (c) 2021 Luis Llamas (www.luisllamas.es)
 
 This library is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
@@ -17,21 +17,54 @@ You should have received a copy of the GNU General Public License along with thi
  * This Library is licensed under a GPLv3 License
  **********************************************************************************************/
 
-
 #ifndef __PID_LIBRARY_h__
 #define __PID_LIBRARY_h__
 
-#define __PID_LIBRARY_VERSION__	2.3.0
+#define __PID_LIBRARY_VERSION__	2.4.0
 
 #include "Arduino.h"
 
+
 namespace PID
 {
-	//Parameter types for some of the functions below
 	enum MODE { MANUAL, AUTOMATIC };
 	enum DIRECTION { DIRECT, REVERSE };
 	enum PROPORTIONAL_ON { MEASURE, ERROR };
 	enum RESOLUTION { MILLIS, MICROS };
+
+	template <typename T>
+	class IController
+	{
+	public:
+		virtual ~IController() = default;
+		
+		virtual bool Update() = 0;
+
+		virtual bool Update(T input) = 0;
+
+		virtual void ForceUpdate() = 0;
+
+		virtual void ForceUpdate(T input) = 0;
+
+		virtual bool IsTurnedOn() = 0;
+
+		virtual void TurnOn() = 0;
+
+		virtual void TurnOff() = 0;
+
+		virtual void Toggle() = 0;
+	};
+
+
+	template <typename T>
+	class ISisoController : public IController<T>
+	{
+	public:
+		T Input;
+		T Output;
+		T Setpoint;
+	};
+
 
 	template <typename T>
 	class PIDParameters
@@ -90,7 +123,7 @@ namespace PID
 	{
 	public:
 		PIDParametersAdaptative(T near_distance, PIDParameters<T> near_parameter, T far_distance, PIDParameters<T> far_parameter)
-			: NearDistance(near_distance), NearParameter(near_parameter), FarDistance(far_distance), FarParameter(far_parameter)
+			: NearParameter(near_parameter), NearDistance(near_distance), FarParameter(far_parameter), FarDistance(far_distance)
 		{
 		}
 
@@ -113,10 +146,10 @@ namespace PID
 
 
 	template <typename T>
-	class PIDController
+	class PIDController : public ISisoController<T>
 	{
 	public:
-		PIDController(PIDParameters<T> pid_parameters, DIRECTION direction = DIRECTION::DIRECT)
+		explicit PIDController(PIDParameters<T> pid_parameters, const DIRECTION direction = DIRECTION::DIRECT)
 		{
 			Parameters_original.Set(pid_parameters);
 			Direction = direction;
@@ -125,25 +158,30 @@ namespace PID
 			Last_time = GetTime() - Sample_time;
 		}
 
-		T Input;
-		T Output;
-		T Setpoint;
-
 		void SetProportionalOn(const PROPORTIONAL_ON proportional_on)
 		{
 			Proportional_On = proportional_on;
 		}
 
-		void SetOutputLimits(const T min_limit, const T max_limit)
+		void SetOutputLimits(const T output_min, const T output_max)
 		{
-			if (min_limit >= max_limit) return;
-			Output_min = min_limit;
-			Output_max = max_limit;
+			SetOutputLimits(output_min, output_max, output_min, output_max);
+		}
+
+		void SetOutputLimits(const T output_min, const T output_max, const T windup_guard_min, const T windup_guard_max)
+		{
+			if (output_min >= output_max) return;
+			if (windup_guard_min >= windup_guard_max) return;
+		
+			Output_min = output_min;
+			Output_max = output_max;
+			Output_sum_min = windup_guard_min;
+			Output_sum_max = windup_guard_max;
 
 			if (IsTurnedOn())
 			{
-				Output = Clamp(Output, Output_min, Output_max);
-				Output_sum = Clamp(Output_sum, Output_min, Output_max);
+				this->Output = Clamp(this->Output, Output_min, Output_max);
+				Output_sum = Clamp(Output_sum, Output_sum_min, Output_sum_max);
 			}
 		}
 
@@ -158,11 +196,10 @@ namespace PID
 		void SetDirection(const DIRECTION direction)
 		{
 			if (Direction == direction) return;
-			
+
 			Direction = direction;
 			ComputeParameters();
 		}
-
 
 		void SetSampleTime(unsigned long sample_time)
 		{
@@ -172,18 +209,18 @@ namespace PID
 			ComputeParameters();
 		}
 
-		void TurnOn() { SetMode(MODE::AUTOMATIC); }
+		void TurnOn() override { SetMode(MODE::AUTOMATIC); }
 
-		void TurnOff() { SetMode(MODE::MANUAL); }
+		void TurnOff() override { SetMode(MODE::MANUAL); }
 
-		void Toggle()
+		void Toggle() override
 		{
 			if (IsTurnedOn()) TurnOff();
 			else TurnOn();
 		}
 
 
-		T GetError() { return Setpoint - Input; }
+		T GetError() { return this->Setpoint - this->Input; }
 
 		T GetKp() { return Parameters_original.Kp; }
 
@@ -197,18 +234,30 @@ namespace PID
 
 		T GetCorrectedKd() { return Parameters_corrected.Kd; }
 
+		T GetTermP() { return TermP; }
+
+		T GetTermI() { return TermI; }
+
+		T GetTermD() { return TermD; }
+
+		
+		T GetOutputMin() { return Output_min; }
+
+		T GetOutputMax() { return Output_max; }
+
+
 		DIRECTION GetDirection() const { return Direction; }
 
 		PROPORTIONAL_ON GetProportionalOn() const { return Proportional_On; }
 
-		bool IsTurnedOn() const { return Mode == MODE::AUTOMATIC; }
+		bool IsTurnedOn() override { return Mode == MODE::AUTOMATIC; }
 
-		bool Update()
+		bool Update() override
 		{
 			if (IsTurnedOn() == false) return false;
 
-			const unsigned long now = GetTime();
-			const unsigned long time_change = (now - Last_time);
+			const auto now = GetTime();
+			const auto time_change = (now - Last_time);
 			if (time_change >= Sample_time)
 			{
 				UpdatePID();
@@ -219,24 +268,30 @@ namespace PID
 			else return false;
 		}
 
-		bool Update(T input)
+		bool Update(T input) override
 		{
-			Input = input;
+			this->Input = input;
 			return Update();
 		}
 
-		void ForceUpdate()
+		void ForceUpdate() override
 		{
 			if (IsTurnedOn() == false) return;
 
+			const auto saved_sample_time = Sample_time;
+			const auto now = GetTime();
+			const auto time_change = (now - Last_time);
+			SetSampleTime(time_change);
+
 			UpdatePID();
 
+			SetSampleTime(saved_sample_time);
 			Last_time = GetTime();
 		}
 
-		void ForceUpdate(T input)
+		void ForceUpdate(T input) override
 		{
-			Input = input;
+			this->Input = input;
 			return ForceUpdate();
 		}
 
@@ -266,35 +321,39 @@ namespace PID
 
 		void Initialize()
 		{
-			Last_input = Input;
-			Output_sum = Output;
+			Last_input = this->Input;
+			Output_sum = this->Output;
 
-			Output_sum = Clamp(Output_sum, Output_min, Output_max);
+			Output_sum = Clamp(Output_sum, Output_sum_min, Output_sum_max);
 		}
 
 		void UpdatePID()
 		{
 			T error = GetError();
-			T diff_input = (Input - Last_input);
+			T diff_input = this->Input - Last_input;
 
-			Output_sum += (Parameters_corrected.Ki * error);
+			TermP = Proportional_On == PROPORTIONAL_ON::ERROR ? Parameters_corrected.Kp * error : Parameters_corrected.Kp * diff_input;
+			TermI = Parameters_corrected.Ki * (error + Last_error) / 2;
+			TermD = - Parameters_corrected.Kd * diff_input;
 
 			if (Proportional_On == PROPORTIONAL_ON::ERROR)
 			{
-				 Output = Parameters_corrected.Kp * error;
+				 this->Output = TermP;
 			}
 			else
 			{
-				Output_sum -= Parameters_corrected.Kp * diff_input;
-				Output = 0;
+				Output_sum -= TermP;
+				this->Output = 0;
 			}
 
-			Output_sum = Clamp(Output_sum, Output_min, Output_max);
+			Output_sum += TermI;
+			Output_sum = Clamp(Output_sum, Output_sum_min, Output_sum_max);
 
-			Output += Output_sum - Parameters_corrected.Kd * diff_input;
-			Output = Clamp(Output, Output_min, Output_max);
+			this->Output += Output_sum + TermD;
+			this->Output = Clamp(this->Output, Output_min, Output_max);
 
-			Last_input = Input;
+			Last_error = error;
+			Last_input = this->Input;
 		}
 
 		unsigned long GetTime() const
@@ -314,7 +373,15 @@ namespace PID
 		T Output_max = 255.0;
 		T Output_sum;
 
+		T Output_sum_min = 0;
+		T Output_sum_max = 255.0;
+
+		T TermP;
+		T TermI;
+		T TermD;
+
 		T Last_input;
+		T Last_error;
 		unsigned long Last_time;
 		unsigned long Sample_time = 100;
 
@@ -324,4 +391,5 @@ namespace PID
 		RESOLUTION Resolution = RESOLUTION::MILLIS;
 	};
 }
+
 #endif
