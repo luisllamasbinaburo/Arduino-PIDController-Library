@@ -1,5 +1,5 @@
 /***************************************************
-PIDController - Version 2.4.0
+PIDController - Version 2.6.0
 Copyright (c) 2021 Luis Llamas (www.luisllamas.es)
 
 This library is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
@@ -20,7 +20,7 @@ You should have received a copy of the GNU General Public License along with thi
 #ifndef __PID_LIBRARY_h__
 #define __PID_LIBRARY_h__
 
-#define __PID_LIBRARY_VERSION__	2.4.0
+#define __PID_LIBRARY_VERSION__	2.6.0
 
 #include "Arduino.h"
 
@@ -48,7 +48,7 @@ namespace PID
 
 		virtual bool IsTurnedOn() = 0;
 
-		virtual void TurnOn() = 0;
+		virtual void TurnOn(bool reset = true) = 0;
 
 		virtual void TurnOff() = 0;
 
@@ -209,7 +209,7 @@ namespace PID
 			ComputeParameters();
 		}
 
-		void TurnOn() override { SetMode(MODE::AUTOMATIC); }
+		void TurnOn(bool reset = true) override { SetMode(MODE::AUTOMATIC, reset); }
 
 		void TurnOff() override { SetMode(MODE::MANUAL); }
 
@@ -244,6 +244,10 @@ namespace PID
 		T GetOutputMin() { return Output_min; }
 
 		T GetOutputMax() { return Output_max; }
+
+		T GetWindupGuardMin() { return Output_sum_min; }
+
+		T GetWindupGuardMax() { return Output_sum_max; }
 
 
 		DIRECTION GetDirection() const { return Direction; }
@@ -310,19 +314,20 @@ namespace PID
 				Parameters_corrected.Invert();
 		}
 
-		void SetMode(const MODE mode)
+		void SetMode(const MODE mode, bool reset = false)
 		{
 			if (Mode == mode) return;
 			Mode = mode;
 
 			if (IsTurnedOn())
-				Initialize();
+				Initialize(reset);
 		}
 
-		void Initialize()
+		void Initialize(bool reset = true)
 		{
+			IsFirstInput = true;
 			Last_input = this->Input;
-			Output_sum = this->Output;
+			Output_sum = reset ? 0 : this->Output;
 
 			Output_sum = Clamp(Output_sum, Output_sum_min, Output_sum_max);
 		}
@@ -330,7 +335,7 @@ namespace PID
 		void UpdatePID()
 		{
 			T error = GetError();
-			T diff_input = this->Input - Last_input;
+			T diff_input = IsFirstInput ? 0 : this->Input - Last_input;
 
 			TermP = Proportional_On == PROPORTIONAL_ON::ERROR ? Parameters_corrected.Kp * error : Parameters_corrected.Kp * diff_input;
 			TermI = Parameters_corrected.Ki * (error + Last_error) / 2;
@@ -352,6 +357,7 @@ namespace PID
 			this->Output += Output_sum + TermD;
 			this->Output = Clamp(this->Output, Output_min, Output_max);
 
+			IsFirstInput = false;
 			Last_error = error;
 			Last_input = this->Input;
 		}
@@ -380,6 +386,7 @@ namespace PID
 		T TermI;
 		T TermD;
 
+		bool IsFirstInput;
 		T Last_input;
 		T Last_error;
 		unsigned long Last_time;
